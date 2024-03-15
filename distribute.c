@@ -166,6 +166,8 @@ char *acceptbuf = NULL;
 char *rejectbuf = NULL;
 char subjectbuf[MAXSUBJLEN];
 char *originatorreplyto = NULL;
+char *originatorfrom = NULL;
+char *gecosfrom = NULL;
 struct msgHeader origMsg;
 char originator[MAXADDRLEN];
 int bodysum = 0;		/* body check sum */
@@ -211,6 +213,7 @@ int useowner = 0;		 /* use owner instead of request for sender */
 int xsequence = 0;		 /* add x-sequence header */
 int addoriginator = 0;		 /* add originator field */
 int accept_error = 0;		 /* not on accept list */
+int gecos = 0;			 /* Rewrite From: for DMARC */
 char *newstrim = NULL;		 /* trim news header */
 char openc, closec;		 /* open/close bracket charcter */
 char *precedence = NULL;	 /* precedensce value */
@@ -239,7 +242,7 @@ char *archivedir = NULL;
  */
 #define EQ(a, b) (strcasecmp((a), (b)) == 0)
 
-#define	GETOPT_PATTERN	"a:cdef:h:ijl:m:n:oqr:stu:v:wxA:B:C:DF:H:I:L:M:N:OP:RS:U:VXY:Z:"
+#define	GETOPT_PATTERN	"a:cdef:gh:ijl:m:n:oqr:stu:v:wxA:B:C:DF:H:I:L:M:N:OP:RS:U:VXY:Z:"
 
 /* Forward Declarations
  */
@@ -516,7 +519,7 @@ usage()
     fprintf(stderr, "\t[-A accept-addr-file] [-S sendmail-path]\n");
     fprintf(stderr, "\t[-U archive-userid] [-u mailer-uid]\n");
     fprintf(stderr, "\t[-C archive-dir] [-Y archive-path]\n");
-    fprintf(stderr, "\t[-DKORVXdeijnoqstuxwc] [-L recip-addr-file | recip-addr ...]\n");
+    fprintf(stderr, "\t[-DKORVXdeijnoqstuxwcg] [-L recip-addr-file | recip-addr ...]\n");
 
 }
 
@@ -646,6 +649,10 @@ parse_options(argc, argv)
 	    
 	case 'f':	/* sender address */
 	    senderaddr = optarg;
+	    break;
+	    
+	case 'g':	/* rewrite From: */
+	    gecos++;
 	    break;
 	    
 	case 'R':	/* zap Received: lines */
@@ -921,6 +928,10 @@ parse_and_clean_header(file)
 	}
     }
     if ((header = head_find(headc, headv, "From:")) != NULL) {
+	if (gecos) {
+		gecosfrom = fakefromaddr(header, list, host);
+	}
+	originatorfrom = header + sizeof("From:");
 	header = normalizeaddr(header + sizeof("From:") - 1);
 	if (header != NULL) {
 	    xstrncpy(origMsg.from, header, sizeof(origMsg.from));
@@ -971,6 +982,10 @@ parse_and_clean_header(file)
 	}
     }
     
+    if (gecos) {
+	head_delete(headc, headv, "From:");
+    }
+
     /*
      * Parse Message-ID and Subject
      */
@@ -1552,9 +1567,16 @@ send_message()
 	}
     }
     
+    /* Add From */
+    if (gecos) {
+	fprintf(pipe, "From: %s\n", gecosfrom);
+	fprintf(pipe, "Reply-To: %s\n", originatorfrom);
+    } else {
+	fprintf(pipe, "From: %s\n", originatorfrom);
+    }
     /* Add a new Reply-To.
      */
-    if (replyto != NULL){
+    if (! gecos && replyto != NULL){
 	if (!forcereplyto && originatorreplyto != NULL) {
 	    fputs(originatorreplyto, pipe);
 	    putc('\n', pipe);
@@ -1941,7 +1963,7 @@ checkhdr(s)
 {
     /* using normalizeaddr to see the field is correct.. */
     if (strncasecmp(s, "From:", 5) == 0) { /* From is special.. */
-	return normalizeaddr(s + sizeof("From")-1) != NULL;
+	return normalizeaddr(s + sizeof("From:")-1) != NULL;
     }
     return checkhdr1(s) == NULL;
 }
