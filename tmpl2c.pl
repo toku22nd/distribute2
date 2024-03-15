@@ -205,7 +205,7 @@ sub convert {
     return (undef, undef) unless $icode = $icode || &getcode(*_);
     $ocode = 'jis' unless $ocode;
     local(*convf) = $convf{$icode, $ocode};
-    do convf(*_);
+    convf(*_);
     (*convf, $icode);
 }
 
