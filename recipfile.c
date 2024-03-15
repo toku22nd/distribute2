@@ -37,6 +37,10 @@
 #include "longstr.h"
 #include "memory.h"
 
+char *paren_err = "paren mismatch\n";
+char *quote_err = "quote mismatch\n";
+char *bracket_err = "angle bracket mismatch\n";
+
 extern void logandexit __P((int, char *, ...));
 extern void logwarn __P((char *, ...));
 
@@ -48,117 +52,242 @@ char *
 normalizeaddr(buf)
     char *buf;
 {
-    char *rp;
-    char *p, *beginp, *tp;
-    char *statstr = "";
+    char *addr;
+    char *hp;
+    char *tp;
+    char *cp;
+    int addrfound = 0;
+    int inp = 0;
+    int inq = 0;
 
     if (strlen(buf) >= MAXADDRLEN) {
 	logwarn("too large buf\n");
 	return NULL;
     }
 
-    p = malloc(sizeof(char) * MAXADDRLEN);
-    tp = p;
+    addr = hp = malloc(sizeof(char) * MAXADDRLEN);
+    *hp = '\0';
 
-    xstrncpy(tp, buf, MAXADDRLEN);
-    while (*tp == ' ' || *tp == '\t')
-	tp++;
-
-    beginp = tp;
-
-    /* delete comment(s) */
-    for (; *statstr == '\0'; tp++) {
-	if (*tp == '\0')
-	    break;
-
-	if (*tp == '\\' && *++tp != '\0') /* ignore quoting */
-	    continue;
-
-	if (*tp == '(') { /* found parenses.. */
-	    char *pstart = tp;
-	    while (*tp && ! ( *tp == ')' && tp[-1] != '\\'))
-		tp++;
-	    if (*tp != ')') {
-		statstr = "paren mismatch";
-		break;
-	    }
-	    strcpy(pstart, tp + 1);
-	    tp = pstart;
-	}
-    }
-
-    /* delete double-quote */
-    for (tp = beginp; *statstr == '\0'; tp++) {
-	if (*tp == '\0')
-	    break;
-
-	if (*tp == '\\' && *++tp != '\0') /* ignore quoting */
-	    continue;
-
-	if (*tp == '"') { /* double-quote, just skip */
-	    char *qstart = tp;
-	    tp++;
-	    while (*tp && !(*tp == '"' && tp[-1] != '\\'))
-		tp++;
-	    if (*tp != '"') {
-		statstr = "doublequote mismatch";
-		break;
-	    }
-	    strcpy(tp, tp + 1);
-	    strcpy(qstart, qstart + 1);
-	}
-    }
-
-    /* find address */
-    for (tp = beginp; *statstr == '\0'; tp++) {
-	if (*tp == '\0')
-	    break;
-
-	if (*tp == '\\' && *++tp != '\0') /* ignore quoting */
-	    continue;
-
-	if (*tp == '<') { /* found non-comment angle bracket */
-	    beginp = ++tp;
-	    if ((tp = strchr(beginp, '>')) != NULL) {
-		*tp = '\0';
-		break;
-	    }
-	    else {
-		statstr = "angle mismatch";
-		break;
+    for (tp = buf; *tp && ! addrfound; tp++) {
+	if (! inp) {
+	    if (! isblank(*tp) || inq) {
+		*addr++ = *tp;
+	 	*addr = '\0';
 	    }
 	}
+	switch (*tp) {
+	    case '\\':
+		if (tp[1] != '\0') {
+		    tp++;	/* ignore */
+		}
+		break;
+	    case '"':	/* in quote */
+		if (inq) {
+		   inq = 0;
+		} else if (! inp) {
+		    inq = 1;
+		}
+		break;
+	    case '(':	/* in paren */
+		if (! inq) {
+		    inp = 1;
+		    if (addr != hp) {
+			addr--;
+			*addr = '\0';
+		    }
+		}
+		break;
+	    case ')':
+		if (! inq) {
+		    if (! inp) {
+			logwarn(paren_err);
+			free(hp);
+			return NULL;
+		    }
+		    inp = 0;
+		    tp++;
+		    while (isblank(*tp)) {
+			tp++;
+		    }
+		    tp--;
+		} 
+	
+		break;
+	    case '<':
+		if (! inp && ! inq) {
+		    cp = index(tp, '>');
+	    	    if (cp != NULL) {
+			tp++;
+			strncpy(hp, tp, cp - tp);
+			hp[cp - tp] = '\0';
+			addrfound = 1;
+		    } else {
+			logwarn(bracket_err);
+			free(hp);
+			return NULL;
+		    }
+		}
+		break;
+	    case '>':
+		if (! inq && ! inp) {
+		    logwarn(bracket_err);
+		    free(hp);
+		    return NULL;
+		}
+		break;
+	    default:
+		break;
+	}
     }
+    if (inq) {
+	logwarn(quote_err);
+	free(hp);
+	return NULL;
+    }
+    if (inp) {
+	logwarn(paren_err);
+	free(hp);
+	return NULL;
+    }
+    if (strlen(hp) == 0) {
+	logwarn("no From: address\n");
+	free(hp);
+	return NULL;
+    }
+    return hp;
+}
 
-    if (*statstr != '\0') {
-	logwarn("%s: %s.\n", statstr, buf);
-	free(p);
+/* fakefromaddr -- rewrite from address to list address
+ */
+
+char *
+fakefromaddr(buf, list, host)
+    char *buf;
+    char *list;
+    char *host;
+{
+    char *addr;
+    char *hp;
+    char *tp;
+    char *bp;
+    char *cp;
+    int addrfound = 0;
+    int inp = 0;
+    int inq = 0;
+    int addrlen;
+
+    if (strlen(buf) >= MAXADDRLEN) {
+	logwarn("too large buf\n");
 	return NULL;
     }
 
-    /* skip beggining white space(s) */
-    while (*beginp == ' ' || *beginp == '\t')
-	beginp++;
+    hp = malloc(sizeof(char) * MAXADDRLEN);
+    bp = NULL;
 
-    if (*beginp == '\0') {
-	logwarn("no address: %s.\n", buf);
+    addr = normalizeaddr(buf);
+    if (addr == NULL) {
+	goto error;
     }
 
-    /* remove trailing space */
-    rp = strrchr(beginp, '\0');
-    if (rp != NULL) {
-	while (rp > beginp && *--rp == ' ')
-	    *rp = '\0';
+    for (tp = buf; *tp && ! addrfound; tp++) {
+	if (! inp) {
+	    if ((! isblank(*tp) && *tp != '(') || inq) {
+		if (bp == NULL) {
+		    bp = tp;	/* address head */
+		}
+	    }
+	}
+	switch (*tp) {
+	    case '\\':
+		if (tp[1] != '\0') {
+		    tp++;	/* ignore */
+		}
+		break;
+	    case '"':	/* in quote */
+		if (inq) {
+		   inq = 0;
+		} else if (! inp) {
+		    inq = 1;
+		}
+		break;
+	    case '(':	/* in paren */
+		if (! inq) {
+		    inp = 1;
+		}
+		break;
+	    case ')':
+		if (! inq) {
+		    if (! inp) {
+			logwarn(paren_err);
+			free(addr);
+			goto error;
+		    }
+		    inp = 0;
+		    tp++;
+		    while (isblank(*tp)) {
+			tp++;
+		    }
+		    tp--;
+		}
+		break;
+	    case '<':
+		if (! inp && ! inq) {
+		    tp++;
+		    bp = tp;
+		    cp = index(tp, '>');
+	    	    if (cp != NULL) {
+			strncpy(hp, tp, cp - tp);
+			hp[cp - tp] = '\0';
+			addrfound = 1;
+		    } else {
+		    	logwarn(bracket_err);
+			free(addr);
+			goto error;
+		    }
+		}
+		break;
+	    case '>':
+		if (! inq && ! inp) {
+		    logwarn(bracket_err);
+		    free(addr);
+		    goto error;
+		}
+		break;
+	    default:
+		break;
+	}
+    }
+    if (inq) {
+	logwarn(quote_err);
+	free(addr);
+	goto error;
+    }
+    if (inp) {
+	logwarn(paren_err);
+	free(addr);
+	goto error;
     }
 
-    tp = malloc(sizeof(char) * MAXADDRLEN);
-    xstrncpy(tp, beginp, MAXADDRLEN);
-    free(p);
+    addrlen = strlen(addr);
 
-    return tp;
+    strncpy(hp, buf, bp - buf);
+    hp[bp - buf] = '\0';
+    strcat(hp, list);
+    strcat(hp, "@");
+    strcat(hp, host);
+    strcat(hp, bp + addrlen);
+
+    free(addr);
+
+    return hp;
+
+error:
+    sprintf(hp, "No Name <%s@%s>", list, host);
+    return hp;
 }
 
 
+#ifndef TEST
 char *
 parserecipfile(filename, errormode)
     char *filename;
@@ -209,7 +338,7 @@ parserecipfile(filename, errormode)
 #endif
     return recipbuf.ls_buf;
 }
-
+#endif
 
 
 
@@ -239,10 +368,22 @@ main(ac, av)
     test("shigeya@foretune.co.jp (Shigeya \"too busy\" Suzuki)");
     test("shigeya@foretune.co.jp (Shigeya 'too busy' Suzuki)");
     test("\":users 1\"@foretune.co.jp");
+    test("<\":users 1\"@foretune.co.jp>");
+    test("hello   <\":users 1\"@foretune.co.jp>   hello (hello)");
+    test("(hello)   \":users 1\"@foretune.co.jp");
     test("=?ISO-2022-JP?B?GyRCTmtMWkxQOkgbKEI=?= <shigeya@foretune.co.jp>");
-    test("shigeya@foretune.co.jp (<Shigeya Suzuki>)");
-    test("=?ISO-2022-JP?B?GyRCTmtMWkxQOkgbKEI=?=\n =?ISO-2022-JP?B?GyRCTmtMWkxQOkgbKEI=?= <shigeya@foretune.co.jp>");
-    test("shigeya@foretune.co.jp (=?ISO-2022-JP?B?GyRCTmtMWkxQOkgbKEI=?=\n =?ISO-2022-JP?B?GyRCTmtMWkxQOkgbKEI=?=)");
+    test("shigeya@foretune.co.jp   (<Shigeya Suzuki>)");
+    test("=?ISO-2022-JP?B?GyRCTmtMWkxQOkgbKEI=?=\n =?ISO-2022-JP?B?GyRCTmtMWkxQOkgbKEI=?=   <shigeya@foretune.co.jp>");
+    test("shigeya@foretune.co.jp   (=?ISO-2022-JP?B?GyRCTmtMWkxQOkgbKEI=?=\n =?ISO-2022-JP?B?GyRCTmtMWkxQOkgbKEI=?=)");
+    test("  <shigeya@foretune.co.jp>   (=?ISO-2022-JP?B?GyRCTmtMWkxQOkgbKEI=?=\n =?ISO-2022-JP?B?GyRCTmtMWkxQOkgbKEI=?=)");
+    test("  shigeya   <shigeya@foretune.co.jp>   (=?ISO-2022-JP?B?GyRCTmtMWkxQOkgbKEI=?=\n =?ISO-2022-JP?B?GyRCTmtMWkxQOkgbKEI=?=)");
+    test("(shigeya)   <shigeya@foretune.co.jp>   (=?ISO-2022-JP?B?GyRCTmtMWkxQOkgbKEI=?=\n =?ISO-2022-JP?B?GyRCTmtMWkxQOkgbKEI=?=)");
+    test("shigeya@foretune.co.jp (Shigeya 'too busy' Suzuki");
+    test("shigeya@foretune.co.jp Shigeya 'too busy' Suzuki)");
+    test("hello <shigeya@foretune.co.jp (Shigeya 'too busy' Suzuki)");
+    test("\"hello<>>(()))\" <shigeya@foretune.co.jp> (Shigeya 'too busy' Suzuki)");
+    test("\"shigeya@foretune.co.jp\" (Shigeya 'too busy' Suzuki)");
+    test("\"Yoshitaka Tokugawa \\\"<<>>>(()))\\\" test\" <toku@tokugawa.org>");
 }
 
 test(s1)
@@ -250,7 +391,8 @@ test(s1)
 {
     char buf[1024];
     strcpy(buf, s1);
-    printf ("target = %s, result='%s'\n", s1, normalizeaddr(buf));
+    printf ("target = '%s'\nresult = '%s'\n", s1, normalizeaddr(buf));
+    printf ("fake = '%s'\n", fakefromaddr(buf, "test", "tokugawa.or.jp"));
 }
 
 void
