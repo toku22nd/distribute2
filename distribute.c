@@ -929,9 +929,9 @@ parse_and_clean_header(file)
     }
     if ((header = head_find(headc, headv, "From:")) != NULL) {
 	if (gecos) {
-		gecosfrom = fakefromaddr(header, list, host);
+		gecosfrom = fakefromaddr(header + sizeof("From:") - 1, list, host);
 	}
-	originatorfrom = header + sizeof("From:");
+	originatorfrom = header + sizeof("From:") - 1;
 	header = normalizeaddr(header + sizeof("From:") - 1);
 	if (header != NULL) {
 	    xstrncpy(origMsg.from, header, sizeof(origMsg.from));
