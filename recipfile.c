@@ -37,9 +37,10 @@
 #include "longstr.h"
 #include "memory.h"
 
-char *paren_err = "paren mismatch\n";
-char *quote_err = "quote mismatch\n";
-char *bracket_err = "angle bracket mismatch\n";
+static char *paren_err = "paren mismatch\n";
+static char *quote_err = "quote mismatch\n";
+static char *bracket_err = "angle bracket mismatch\n";
+static char *memory_err = "insufficient memory\n";
 
 extern void logandexit __P((int, char *, ...));
 extern void logwarn __P((char *, ...));
@@ -66,6 +67,11 @@ normalizeaddr(buf)
     }
 
     addr = hp = malloc(sizeof(char) * MAXADDRLEN);
+
+    if (hp == NULL) {
+	logandexit(EX_UNAVAILABLE, memory_err);
+    }
+
     *hp = '\0';
 
     for (tp = buf; *tp && ! addrfound; tp++) {
@@ -177,6 +183,11 @@ fakefromaddr(buf, list, host)
     int addrlen;
 
     hp = malloc(sizeof(char) * MAXADDRLEN);
+
+    if (hp == NULL) {
+	logandexit(EX_UNAVAILABLE, memory_err);
+    }
+
     bp = NULL;
 
     if (strlen(buf) >= MAXADDRLEN) {
