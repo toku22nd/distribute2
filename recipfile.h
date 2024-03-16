@@ -12,5 +12,6 @@
 
 extern char * normalizeaddr  __P((char*));
 extern char * parserecipfile __P((char*, int));
+extern char * fakefromaddr  __P((char*, char*, char*));
 
 #endif	/* __PARSERECIPFILE_H__ */
