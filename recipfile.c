@@ -176,13 +176,13 @@ fakefromaddr(buf, list, host)
     int inq = 0;
     int addrlen;
 
-    if (strlen(buf) >= MAXADDRLEN) {
-	logwarn("too large buf\n");
-	return NULL;
-    }
-
     hp = malloc(sizeof(char) * MAXADDRLEN);
     bp = NULL;
+
+    if (strlen(buf) >= MAXADDRLEN) {
+	logwarn("too large buf\n");
+	goto error;
+    }
 
     addr = normalizeaddr(buf);
     if (addr == NULL) {
