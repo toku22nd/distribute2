@@ -53,12 +53,12 @@ normalizeaddr(header)
     char *header;
 {
     char *hp;			/* current position of header buffer */
-    char *addr_h;		/* mail address head pointpoint */
-    char *addr_end;		/* mail address end pointpoint */
+    char *addr_h;		/* mail address head position */
+    char *addr_end;		/* mail address end position */
     char *addr_p;		/* mail address current position */
     int in_paren = 0;		/* true if in paren */
     int in_quote = 0;		/* true if in quote */
-    int in_address = 0;		/* *hp points mail address part */
+    int in_address = 0;		/* *hp points mail address portion */
     int addrfound = 0;		/* true if <mail@addr> found */
 
     if (strlen(header) >= MAXADDRLEN) {
