@@ -48,96 +48,101 @@ extern void logwarn __P((char *, ...));
 
 /* normalizeaddr -- check one address and normalize it if necessary.
  */
-
 char *
-normalizeaddr(buf)
-    char *buf;
+normalizeaddr(header)
+    char *header;
 {
-    char *addr;
-    char *hp;
-    char *tp;
-    char *cp;
-    int addrfound = 0;
-    int inp = 0;
-    int inq = 0;
+    char *hp;			/* current position of header buffer */
+    char *addr_h;		/* mail address head position */
+    char *addr_end;		/* mail address end position */
+    char *addr_p;		/* mail address current position */
+    int in_paren = 0;		/* true if in paren */
+    int in_quote = 0;		/* true if in quote */
+    int in_address = 0;		/* *hp points mail address portion */
+    int addrfound = 0;		/* true if <mail@addr> found */
 
-    if (strlen(buf) >= MAXADDRLEN) {
-	logwarn("too large buf\n");
+    if (strlen(header) >= MAXADDRLEN) {
+	logwarn("too large header\n");
 	return NULL;
     }
 
-    addr = hp = malloc(sizeof(char) * MAXADDRLEN);
+    addr_p = addr_h = malloc(sizeof(char) * MAXADDRLEN);
 
-    if (hp == NULL) {
+    if (addr_h == NULL) {
 	logandexit(EX_UNAVAILABLE, memory_err);
     }
 
-    *hp = '\0';
+    /* malloc() returns uninitialized buffer. make sure buffer is empty. */
+    *addr_p = '\0';
 
-    for (tp = buf; *tp && ! addrfound; tp++) {
-	if (! inp) {
-	    if (! isblank(*tp) || inq) {
-		*addr++ = *tp;
-	 	*addr = '\0';
+    /* scan mail address part from header */
+    for (hp = header; *hp && ! addrfound; hp++) {
+	if (! in_paren) {
+	    if ((! isblank(*hp) && *hp != '(') || in_quote) {
+		in_address = 1;
+		*addr_p++ = *hp;
+	 	*addr_p = '\0';
+	    } else {
+		in_address = 0;
 	    }
 	}
-	switch (*tp) {
+	switch (*hp) {
 	    case '\\':
-		if (tp[1] != '\0') {
-		    tp++;	/* ignore */
+		if (hp[1] != '\0') {
+		    hp++;	/* ignore */
 		}
 		break;
 	    case '"':	/* in quote */
-		if (inq) {
-		   inq = 0;
-		} else if (! inp) {
-		    inq = 1;
+		if (in_quote) {
+		   in_quote = 0;
+		} else if (! in_paren) {
+		    in_quote = 1;
 		}
 		break;
 	    case '(':	/* in paren */
-		if (! inq) {
-		    inp = 1;
-		    if (addr != hp) {
-			addr--;
-			*addr = '\0';
-		    }
+		if (! in_quote) {
+		    in_paren = 1;
 		}
 		break;
 	    case ')':
-		if (! inq) {
-		    if (! inp) {
+		if (! in_quote) {
+		    if (! in_paren) {
 			logwarn(paren_err);
-			free(hp);
+			free(addr_h);
 			return NULL;
 		    }
-		    inp = 0;
-		    tp++;
-		    while (isblank(*tp)) {
-			tp++;
+		    in_paren = 0;
+		    hp++;
+		    while (isblank(*hp)) {
+			hp++;
 		    }
-		    tp--;
+		    hp--;
+		    if (in_address) {
+			*addr_p++ = '.';	/* replace (comment) to '.' */
+	 		*addr_p = '\0';
+		    }
 		} 
 	
 		break;
 	    case '<':
-		if (! inp && ! inq) {
-		    cp = index(tp, '>');
-	    	    if (cp != NULL) {
-			tp++;
-			strncpy(hp, tp, cp - tp);
-			hp[cp - tp] = '\0';
+		if (! in_paren && ! in_quote) {
+		    addr_end = index(hp, '>');
+	    	    if (addr_end != NULL) {
+			hp++;
+			strncpy(addr_h, hp, addr_end - hp);
+			addr_h[addr_end - hp] = '\0';
 			addrfound = 1;
 		    } else {
 			logwarn(bracket_err);
-			free(hp);
+			free(addr_h);
 			return NULL;
 		    }
 		}
 		break;
 	    case '>':
-		if (! inq && ! inp) {
+		if (! in_quote && ! in_paren) {
 		    logwarn(bracket_err);
-		    free(hp);
+		    free(addr_h);
 		    return NULL;
 		}
 		break;
@@ -145,157 +150,175 @@ normalizeaddr(buf)
 		break;
 	}
     }
-    if (inq) {
+    if (in_quote) {
 	logwarn(quote_err);
-	free(hp);
+	free(addr_h);
 	return NULL;
     }
-    if (inp) {
+    if (in_paren) {
 	logwarn(paren_err);
-	free(hp);
+	free(addr_h);
 	return NULL;
     }
-    if (strlen(hp) == 0) {
+    if (strlen(addr_h) == 0) {
 	logwarn("no From: address\n");
-	free(hp);
+	free(addr_h);
 	return NULL;
     }
-    return hp;
+    return addr_h;
 }
 
 /* fakefromaddr -- rewrite from address to list address
  */
 
 char *
-fakefromaddr(buf, list, host)
-    char *buf;
-    char *list;
-    char *host;
+fakefromaddr(header, listname, hostname)
+    char *header;
+    char *listname;
+    char *hostname;
 {
-    char *addr;
-    char *hp;
-    char *tp;
-    char *bp;
-    char *cp;
-    int addrfound = 0;
-    int inp = 0;
-    int inq = 0;
-    int addrlen;
+    char *hp;			/* current position of header buffer */
+    char *addr_h;		/* mail address head position */
+    char *addr_end;		/* mail address end position */
+    char *addr_p;		/* mail address current position */
+    char *comment_h;		/* comment buffer head position */
+    char *comment_p;		/* comment buffer current position */
+    int in_paren = 0;		/* true if in paren */
+    int in_quote = 0;		/* true if in quote */
+    int addrfound = 0;		/* true if <mail@addr> found */
 
-    hp = malloc(sizeof(char) * MAXADDRLEN);
+    addr_h = malloc(sizeof(char) * MAXADDRLEN);
 
-    if (hp == NULL) {
+    if (addr_h == NULL) {
 	logandexit(EX_UNAVAILABLE, memory_err);
     }
 
-    bp = NULL;
+    comment_p = comment_h = malloc(sizeof(char) * MAXADDRLEN);
 
-    if (strlen(buf) >= MAXADDRLEN) {
-	logwarn("too large buf\n");
+    if (comment_p == NULL) {
+	logandexit(EX_UNAVAILABLE, memory_err);
+    }
+
+    addr_p = NULL;
+
+    if (strlen(header) >= MAXADDRLEN) {
+	logwarn("too large header\n");
 	goto error;
     }
 
-    addr = normalizeaddr(buf);
-    if (addr == NULL) {
-	goto error;
-    }
-
-    for (tp = buf; *tp && ! addrfound; tp++) {
-	if (! inp) {
-	    if ((! isblank(*tp) && *tp != '(') || inq) {
-		if (bp == NULL) {
-		    bp = tp;	/* address head */
+    /* scan mail address part from header */
+    for (hp = header; *hp && ! addrfound; hp++) {
+	if (! in_paren) {
+	    if ((! isblank(*hp) && *hp != '(') || in_quote) {
+		if (addr_p == NULL) {
+		    addr_p = hp;	/* mail address head */
+		} else {
+		    addr_end = hp + 1;
 		}
 	    }
 	}
-	switch (*tp) {
+	switch (*hp) {
 	    case '\\':
-		if (tp[1] != '\0') {
-		    tp++;	/* ignore */
+		if (hp[1] != '\0') {
+		    hp++;	/* ignore */
 		}
 		break;
 	    case '"':	/* in quote */
-		if (inq) {
-		   inq = 0;
-		} else if (! inp) {
-		    inq = 1;
+		if (in_quote) {
+		   in_quote = 0;
+		} else if (! in_paren) {
+		    in_quote = 1;
 		}
 		break;
 	    case '(':	/* in paren */
-		if (! inq) {
-		    inp = 1;
+		if (! in_quote) {
+		    in_paren = 1;
+		    if (addr_p != NULL) {
+			*comment_p++ = ' ';
+			*comment_p++ = *hp;
+			*comment_p = '\0';
+		    }
 		}
 		break;
 	    case ')':
-		if (! inq) {
-		    if (! inp) {
+		if (! in_quote) {
+		    if (! in_paren) {
 			logwarn(paren_err);
-			free(addr);
 			goto error;
 		    }
-		    inp = 0;
-		    tp++;
-		    while (isblank(*tp)) {
-			tp++;
+		    in_paren = 0;
+		    if (addr_p != NULL) {
+			*comment_p++ = *hp;
+			*comment_p = '\0';
 		    }
-		    tp--;
+		    hp++;
+		    while (isblank(*hp)) {
+			hp++;
+		    }
+		    hp--;
 		}
 		break;
 	    case '<':
-		if (! inp && ! inq) {
-		    tp++;
-		    bp = tp;
-		    cp = index(tp, '>');
-	    	    if (cp != NULL) {
-			strncpy(hp, tp, cp - tp);
-			hp[cp - tp] = '\0';
+		if (! in_paren && ! in_quote) {
+		    hp++;
+		    addr_p = hp;
+		    addr_end = index(hp, '>');
+	    	    if (addr_end != NULL) {
+			strncpy(addr_h, hp, addr_end - hp);
+			addr_h[addr_end - hp] = '\0';
 			addrfound = 1;
 		    } else {
 		    	logwarn(bracket_err);
-			free(addr);
 			goto error;
 		    }
 		}
 		break;
 	    case '>':
-		if (! inq && ! inp) {
+		if (! in_quote && ! in_paren) {
 		    logwarn(bracket_err);
-		    free(addr);
 		    goto error;
 		}
 		break;
 	    default:
+		if (in_paren) {
+		    if (addr_p != NULL) {
+			*comment_p++ = *hp;
+			*comment_p = '\0';
+		    }
+		}
 		break;
 	}
     }
-    if (inq) {
+    if (in_quote) {
 	logwarn(quote_err);
-	free(addr);
 	goto error;
     }
-    if (inp) {
+    if (in_paren) {
 	logwarn(paren_err);
-	free(addr);
 	goto error;
     }
 
-    addrlen = strlen(addr);
+    strncpy(addr_h, header, addr_p - header);
+    addr_h[addr_p - header] = '\0';
+    strcat(addr_h, listname);
+    strcat(addr_h, "@");
+    strcat(addr_h, hostname);
+    if (addrfound) {
+	strcat(addr_h, addr_end);
+    } else if (comment_p != comment_h) {
+	strcat(addr_h, comment_h);
+    }
 
-    strncpy(hp, buf, bp - buf);
-    hp[bp - buf] = '\0';
-    strcat(hp, list);
-    strcat(hp, "@");
-    strcat(hp, host);
-    strcat(hp, bp + addrlen);
+    free(comment_h);
 
-    free(addr);
-
-    return hp;
+    return addr_h;
 
 error:
-    sprintf(hp, "No Name <%s@%s>", list, host);
-    return hp;
+    sprintf(addr_h, "No Name <%s@%s>", listname, hostname);
+    free(comment_h);
+    return addr_h;
 }
+
 
 
 #ifndef TEST
@@ -392,9 +415,19 @@ main(ac, av)
     test("shigeya@foretune.co.jp (Shigeya 'too busy' Suzuki");
     test("shigeya@foretune.co.jp Shigeya 'too busy' Suzuki)");
     test("hello <shigeya@foretune.co.jp (Shigeya 'too busy' Suzuki)");
-    test("\"hello<>>(()))\" <shigeya@foretune.co.jp> (Shigeya 'too busy' Suzuki)");
-    test("\"shigeya@foretune.co.jp\" (Shigeya 'too busy' Suzuki)");
-    test("\"Yoshitaka Tokugawa \\\"<<>>>(()))\\\" test\" <toku@tokugawa.org>");
+    test("\"hello <shigeya@foretune.co.jp> (Shigeya 'too busy' Suzuki)");
+    test("sh\"i\"\"g\"  eya  @f o\"r\"  et  \"un\"e \".c\"o\".\"j   p");
+    test("  (hello) sh\"i\"\"g\" (world)  eya  @f o\"r\"  et  \"un\"e \".c\"o\".\"j   p (japan)");
+    test("  (hello) sh\"i\"\"g\" (world)  eya  @f o\"r\"  et  \"un\"e \".c\"o\".\"j   p (japan) .org");
+    test("foo.bar@wide.ad.jp");
+    test("  (hello) foo(world)var@wide.ad.jp");
+    test("  (hello) foo(world)bar@wide.ad.jp (japan)");
+    test(" foo.bar@wide.ad.jp");
+    test("\"foo\"\".bar\"@wide.ad.jp");
+    test("\"foo\" \t . \t \"bar\"@wide.ad.jp");
+    test("\"\" foo.bar@wide.ad.jp");
+    test("\" \" foo.bar@wide.ad.jp");
+    test("test (comment) hello <shigeya@wide.ad.jp> TEST (COMMENT) HELLO");
 }
 
 test(s1)
@@ -403,7 +436,7 @@ test(s1)
     char buf[1024];
     strcpy(buf, s1);
     printf ("target = '%s'\nresult = '%s'\n", s1, normalizeaddr(buf));
-    printf ("fake = '%s'\n", fakefromaddr(buf, "test", "tokugawa.or.jp"));
+    printf ("fake = '%s'\n", fakefromaddr(buf, "fake", "address.com"));
 }
 
 void

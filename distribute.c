@@ -984,6 +984,7 @@ parse_and_clean_header(file)
     
     if (gecos) {
 	head_delete(headc, headv, "From:");
+	head_delete(headc, headv, "Reply-To:");
     }
 
     /*
