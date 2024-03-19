@@ -15,7 +15,8 @@
 
 	  With this option, distribute can pass the DMARC check (I believe).
 	  - distribute.c add -g option
-	  - recipfile.c add fakefromadd(), normalizeaddr() is totally rewritten.
+	  - recipfile.c add fakefromaddr()
+	    normalizeaddr() is totally rewritten.
 
 2002-05-30  Shigeya Suzuki  <shigeya@shigeya.org>
 
