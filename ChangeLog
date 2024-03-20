@@ -1,3 +1,23 @@
+2024-03-20  Yoshitaka Tokugawa <toku@tokugawa.org>
+
+	* add new option -g
+	  if you send a mail to mlname@mldomain.org, -g option rewrites
+	   headers as follows.
+
+	  Original headers
+	  From: ML user <toku@tokugawa.org>
+	  To: mlname@mldomain.org
+
+	  After rewrite
+	  From: ML user <mlname@mldomain.org>
+	  To: mlname@mldomain.org
+	  Reply-To: ML user <toku@tokugawa.org>
+
+	  With this option, distribute can pass the DMARC check (I believe).
+	  - distribute.c add -g option
+	  - recipfile.c add fakefromaddr()
+	    normalizeaddr() is totally rewritten.
+
 2002-05-30  Shigeya Suzuki  <shigeya@shigeya.org>
 
 	* raising patchlevel to 28 beta.
